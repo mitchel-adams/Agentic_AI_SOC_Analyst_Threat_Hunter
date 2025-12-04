@@ -3,6 +3,21 @@ from colorama import Fore
 import pandas as pd
 
 def query_devicelogonevents(log_analytics_client, workspace_id, timerange_hours, table_name, device_name, fields, caller):
+    # --- NEW: map AlertInfo -> SecurityAlert and set correct fields ---
+    if table_name in ("AlertInfo", "SecurityAlert"):
+        # Your threats are in the SecurityAlert table, not AlertInfo
+        table_name = "SecurityAlert"
+        # Use columns that actually exist in SecurityAlert
+        fields = "TimeGenerated, DisplayName, AlertName, AlertSeverity, Description, ProviderName"
+
+    # tables that actually have a DeviceName column
+    tables_with_device_name = {
+        "DeviceProcessEvents",
+        "DeviceNetworkEvents",
+        "DeviceLogonEvents",
+        "DeviceFileEvents",
+        "DeviceRegistryEvents",
+    }
 
     if table_name == "AzureNetworkAnalytics_CL":
         user_query = f'''{table_name}
@@ -10,21 +25,27 @@ def query_devicelogonevents(log_analytics_client, workspace_id, timerange_hours,
 | project {fields}
 | order by TimeGenerated desc'''
         
-    elif table_name == "AzureActivity":
+    elif table_name == "AzureActivity" and caller:
         user_query = f'''{table_name}
 | where Caller startswith "{caller}"
 | project {fields}
 | order by TimeGenerated desc'''
         
-    elif table_name == "SigninLogs":
+    elif table_name == "SigninLogs" and caller:
         user_query = f'''{table_name}
 | where UserPrincipalName startswith "{caller}"
 | project {fields}
 | order by TimeGenerated desc'''
         
-    else:
+    elif table_name in tables_with_device_name and device_name:
         user_query = f'''{table_name}
 | where DeviceName startswith "{device_name}"
+| project {fields}
+| order by TimeGenerated desc'''
+        
+    else:
+        # SecurityAlert, AlertEvidence, anything without DeviceName / special filters
+        user_query = f'''{table_name}
 | project {fields}
 | order by TimeGenerated desc'''
         
@@ -39,14 +60,11 @@ def query_devicelogonevents(log_analytics_client, workspace_id, timerange_hours,
         timespan=timedelta(hours=timerange_hours)
     )
 
-    # Extract the table
     table = response.tables[0]
+    print(f"{Fore.WHITE}Log Analytics query returned {len(table.rows)} record(s).\n")
 
-    print(f"{Fore.WHITE}Log Analytics query returned {len(response.tables[0].rows)} record(s).\n")
-
-    # Extract columns and rows using dot notation
-    columns = table.columns  # Already a list of strings
-    rows = table.rows        # List of row data
+    columns = table.columns
+    rows = table.rows
 
     df = pd.DataFrame(rows, columns=columns)
     results = df.to_csv(index=False)
